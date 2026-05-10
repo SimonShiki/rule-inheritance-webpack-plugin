@@ -95,6 +95,17 @@ class RuleInheritancePlugin {
         }
       }
     }
+
+    /** @type {Logger} */
+    this.logger = null;
+  }
+
+  /**
+   * Set webpack logger.
+   * @param {Logger} logger Webpac logger.
+   */
+  setLogger(logger) {
+    this.logger = logger;
   }
 
   /**
@@ -210,11 +221,10 @@ class RuleInheritancePlugin {
    * Get webpack configuration from given package.
    * @param {string} packagePath Path to package.
    * @param {ResolveOptions} resolveOptions Resolve options.
-   * @param {Logger} logger Webpack logger.
    * @returns {webpack.WebpackOptionsNormalized} Webpack config object.
    *    An error will be thrown if package doesn't exist.
    */
-  getPackageConfig(packagePath, resolveOptions, logger) {
+  getPackageConfig(packagePath, resolveOptions) {
     // Check that package path should be a existing directory and package.json must exists.
     if (
       !fs.existsSync(packagePath) ||
@@ -281,7 +291,7 @@ class RuleInheritancePlugin {
       }
     }
 
-    logger.warn(`no satisfied config found in ${packagePath}, the first config will be used`);
+    this.logger.warn(`no satisfied config found in ${packagePath}, the first config will be used`);
     return firstOption;
   }
 
@@ -351,17 +361,16 @@ class RuleInheritancePlugin {
   /**
    * Get nherited rules from given packages.
    * @param {ResolveOptions} resolveOptions Resolve options.
-   * @param {Logger} logger Webpack logger.
-   * @param {Set<string>} [inheritedPackages] Set of packages' path that are inherited.
+   * @param {Set<string>} [inheritedPackages] Set of paths to the packages that have been inherited.
    * @returns {Rule[]} Inherited rules.
    */
-  doRuleInheritance(resolveOptions, logger, inheritedPackages = new Set()) {
+  doRuleInheritance(resolveOptions, inheritedPackages = new Set()) {
     /** @type {Rule[]} */
     const newRules = [];
 
     for (const packagePath of this.options.packages) {
       if (inheritedPackages.has(packagePath)) {
-        logger.info(`skip ${packagePath} since it has been inherited`);
+        this.logger.info(`skip ${packagePath} since it has been inherited`);
         continue;
       } else {
         inheritedPackages.add(packagePath);
@@ -369,9 +378,9 @@ class RuleInheritancePlugin {
 
       let config;
       try {
-        config = this.getPackageConfig(packagePath, resolveOptions, logger);
+        config = this.getPackageConfig(packagePath, resolveOptions);
       } catch (error) {
-        logger.error(error.message);
+        this.logger.error(error.message);
         continue;
       }
 
@@ -382,11 +391,12 @@ class RuleInheritancePlugin {
           for (const plugin of config.plugins) {
             if (
               plugin instanceof PluginClass &&
+              typeof plugin.setLogger(this.logger) &&
               typeof plugin.doRuleInheritance === 'function'
             ) {
+              plugin.setLogger(this.logger);
               const rules = plugin.doRuleInheritance(
                 this.getResolveOptionsFromWebpack(config.resolve),
-                logger,
                 inheritedPackages
               );
               newRules.push(...rules);
@@ -396,7 +406,7 @@ class RuleInheritancePlugin {
       }
 
       const inheritedRules = this.getInheritedRules(config, packagePath);
-      logger.info(`inherit ${inheritedRules.length} rules from ${packagePath}`);
+      this.logger.info(`inherit ${inheritedRules.length} rules from ${packagePath}`);
       newRules.push(...inheritedRules);
     }
 
@@ -408,11 +418,9 @@ class RuleInheritancePlugin {
    */
   apply(compiler) {
     compiler.hooks.afterEnvironment.tap('RuleInheritancePlugin', () => {
-      const logger = compiler.getInfrastructureLogger('rule-inheritance-webpack-plugin');
-
+      this.logger = compiler.getInfrastructureLogger('rule-inheritance-webpack-plugin');
       const newRules = this.doRuleInheritance(
-        this.getResolveOptionsFromWebpack(compiler.options.resolve),
-        logger
+        this.getResolveOptionsFromWebpack(compiler.options.resolve)
       );
       compiler.options.module.rules = newRules.concat(compiler.options.module.rules);
     });
